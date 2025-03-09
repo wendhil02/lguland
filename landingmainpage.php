@@ -19,6 +19,7 @@ if (!isset($_SESSION['otp_verified']) || $_SESSION['otp_verified'] !== true) {
 // ✅ Get email and session token from session
 $email = $_SESSION['email'];
 $session_token = $_SESSION['session_token'];
+
 $user_id = $_SESSION['id'];
 
 // ✅ Check session token validity and user verification status
