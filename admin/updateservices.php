@@ -68,6 +68,6 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 
     $stmt->close();
-    header("Location: ../landingmainpage.php");
+    header("Location:https:../admin/servicesadmin.php");
     exit();
 }

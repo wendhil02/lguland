@@ -1,5 +1,14 @@
 <?php
+session_set_cookie_params([
+    'lifetime' => 3600,
+    'path' => '/',
+    'secure' => isset($_SERVER["HTTPS"]),
+    'httponly' => true,
+    'samesite' => 'Lax'
+]);
 session_start();
+session_regenerate_id(true);
+
 include 'connectiondb/connection.php';
 
 use PHPMailer\PHPMailer\PHPMailer;
@@ -12,33 +21,20 @@ require 'PHPMailer/src/SMTP.php';
 error_reporting(E_ALL);
 ini_set('display_errors', 1);
 
-// ✅ Check if user is already logged in
+date_default_timezone_set('Asia/Manila');
+
+//  Redirect if already logged in
 if (isset($_SESSION['email']) && isset($_SESSION['session_token'])) {
-    $email = $_SESSION['email'];
-    $stmt = $conn->prepare("SELECT session_token FROM registerlanding WHERE email = ?");
-    $stmt->bind_param("s", $email);
-    $stmt->execute();
-    $stmt->bind_result($db_session_token);
-    $stmt->fetch();
-    $stmt->close();
-
-    if ($db_session_token !== $_SESSION['session_token']) {
-        session_unset();
-        session_destroy();
-        echo "<script>alert('You have been logged out due to a new login. Please log in again.'); window.location.href='index.php';</script>";
-        exit();
-    }
-
     header("Location: landingmainpage.php");
     exit();
 }
 
-// ✅ CSRF Token (Security)
+// ✅ CSRF Protection
 if (!isset($_SESSION['csrf_token'])) {
     $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
 }
 
-// ✅ Process Login
+// ✅ Login Process
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = trim(htmlspecialchars($_POST['email']));
     $password = trim($_POST['password']);
@@ -49,88 +45,93 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         exit();
     }
 
-    // ✅ Check If User Exists and Get Role
-    $stmt = $conn->prepare("SELECT id, first_name, last_name, password, session_token, role FROM registerlanding WHERE email = ?");
+    // ✅ Check if user exists & fetch session token
+    $stmt = $conn->prepare("SELECT id, first_name, last_name, password, role, session_token FROM registerlanding WHERE email = ?");
     $stmt->bind_param("s", $email);
     $stmt->execute();
     $result = $stmt->get_result();
+    $row = $result->fetch_assoc();
+    $stmt->close();
 
-    if ($result->num_rows === 1) {
-        $row = $result->fetch_assoc();
-
-        if (!empty($row['session_token'])) {
-            echo "<script>alert('You are already logged in on another tab! Please logout first.'); window.location.href='index.php';</script>";
-            exit();
-        }
-
-        if (password_verify($password, $row['password'])) {
-            session_regenerate_id(true);
-            $_SESSION['id'] = $row['id'];
-            $_SESSION['email'] = $email;
-            $_SESSION['role'] = $row['role']; // ✅ Store user role
-
-            // ✅ Generate session token
-            $session_token = bin2hex(random_bytes(32));
-            $_SESSION['session_token'] = $session_token;
-
-            $update_stmt = $conn->prepare("UPDATE registerlanding SET session_token=? WHERE email=?");
-            $update_stmt->bind_param("ss", $session_token, $email);
-            $update_stmt->execute();
-
-            // ✅ Generate OTP
-            $otp = rand(100000, 999999);
-            $otp_expiry = date("Y-m-d H:i:s", strtotime("+5 minutes"));
-
-            // ✅ Save OTP in Database
-            $update_stmt = $conn->prepare("UPDATE registerlanding SET otp=?, otp_expiry=? WHERE email=?");
-            $update_stmt->bind_param("sss", $otp, $otp_expiry, $email);
-            $update_stmt->execute();
-
-            // ✅ Send OTP via Email using PHPMailer
-            $mail = new PHPMailer(true);
-            try {
-                $mail->isSMTP();
-                $mail->Host = 'smtp.gmail.com';
-                $mail->SMTPAuth = true;
-                $mail->Username = 'wendhil10@gmail.com'; // Replace with your email
-                $mail->Password = 'qfcz ekjf bfte zptm'; // Use App Password
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-                $mail->Port = 587;
-
-                $mail->setFrom('your-email@gmail.com', 'Your Website');
-                $mail->addAddress($email);
-
-                $mail->Subject = "Your Login OTP Code";
-                $mail->Body = "Your OTP Code is: <b>" . $otp . "</b>";
-                $mail->isHTML(true);
-
-                if ($mail->send()) {
-                    echo "<script>alert('OTP code sent to your Gmail. Please check your Spam folder if not received.'); window.location.href='otp_verification.php';</script>";
-                    exit();
-                } else {
-                    $_SESSION['error_message'] = "OTP email not sent.";
-                }
-            } catch (Exception $e) {
-                $_SESSION['error_message'] = "Error sending OTP: " . $mail->ErrorInfo;
-            }
-
-            // ✅ Redirect Based on Role AFTER OTP verification
-            $_SESSION['redirect_after_otp'] = ($row['role'] === 'Super Admin') ? 'admin/usermng.php' : (($row['role'] === 'Admin') ? 'admin/servicesadmin.php' : 'landingmainpage.php');
-        } else {
-            $_SESSION['error_message'] = "Wrong password!";
-        }
-    } else {
+    if (!$row) {
         $_SESSION['error_message'] = "User not found!";
+        header("Location: index.php");
+        exit();
     }
 
-    $stmt->close();
-    $conn->close();
+    // ✅ Prevent Multiple Logins: Logout old session first
+    if (!empty($row['session_token'])) {
+        // ❌ Auto-logout the existing session before allowing new login
+        $clear_session_stmt = $conn->prepare("UPDATE registerlanding SET session_token=NULL WHERE email=?");
+        $clear_session_stmt->bind_param("s", $email);
+        $clear_session_stmt->execute();
+        $clear_session_stmt->close();
+    }
+
+    // ✅ Verify Password
+    if (password_verify($password, $row['password'])) {
+        session_regenerate_id(true); // Secure session
+
+        $_SESSION['id'] = $row['id'];
+        $_SESSION['email'] = $email;
+        $_SESSION['role'] = $row['role'];
+
+        // ✅ Generate a new session token
+        $new_session_token = bin2hex(random_bytes(32));
+        $_SESSION['session_token'] = $new_session_token;
+
+        // ✅ Save new session token in database
+        $update_stmt = $conn->prepare("UPDATE registerlanding SET session_token=? WHERE email=?");
+        $update_stmt->bind_param("ss", $new_session_token, $email);
+        $update_stmt->execute();
+        $update_stmt->close();
+
+        // ✅ Generate OTP
+        $otp = rand(100000, 999999);
+        $otp_expiry = date("Y-m-d H:i:s", strtotime("+5 minutes"));
+
+        // ✅ Save OTP in Database
+        $update_otp_stmt = $conn->prepare("UPDATE registerlanding SET otp=?, otp_expiry=? WHERE email=?");
+        $update_otp_stmt->bind_param("sss", $otp, $otp_expiry, $email);
+        $update_otp_stmt->execute();
+        $update_otp_stmt->close();
+
+        // ✅ Send OTP via Email
+        $mail = new PHPMailer(true);
+        try {
+            $mail->isSMTP();
+            $mail->Host = 'smtp.gmail.com';
+            $mail->SMTPAuth = true;
+            $mail->Username = 'unifiedlgu@gmail.com';
+            $mail->Password = 'kbyt zdmk khsd pcvt'; // Use App Password
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->Port = 587;
+
+            $mail->setFrom('unifiedlgu@gmail.com', 'LGU E-Services');
+            $mail->addAddress($email);
+
+             $mail->Subject = "Your Login OTP Code";
+             $mail->Body = "Your OTP Code is: <b>" . $otp . "</b>";
+            $mail->isHTML(true);
+
+         if ($mail->send()) {
+                 $_SESSION['otp_required'] = true;
+                header("Location: otp_verification.php?email=" . urlencode($email));
+                exit();
+             } else {
+                $_SESSION['error_message'] = "OTP email not sent.";
+            }
+        } catch (Exception $e) {
+            $_SESSION['error_message'] = "Error sending OTP: " . $mail->ErrorInfo;
+        }
+    } else {
+        $_SESSION['error_message'] = "Wrong password!";
+    }
 
     header("Location: index.php");
     exit();
 }
 ?>
-
 
 
 
@@ -185,7 +186,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
             <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
 
-            <!-- ✅ Error Message Here -->
+            <!--  Error Message Here -->
             <?php
             if (isset($_SESSION['error_message'])) {
                 echo '<p class="text-red-500 text-sm text-center mb-3">' . $_SESSION['error_message'] . '</p>';

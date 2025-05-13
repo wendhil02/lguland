@@ -1,31 +1,81 @@
 <?php
 session_start();
-include 'connectiondb/connection.php'; // Database connection
+include 'connectiondb/connection.php';
 
-// ✅ If the user is already logged in and OTP is verified, redirect them
-if (isset($_SESSION['email']) && isset($_SESSION['session_token']) && isset($_SESSION['id']) && isset($_SESSION['otp_verified']) && $_SESSION['otp_verified'] === true) {
-    header("Location: landingmainpage.php"); // Change this to your main page
+// ✅ Set timezone
+date_default_timezone_set('Asia/Manila');
+
+// ✅ Prevent Infinite Redirects
+if (isset($_SESSION['otp_verified']) && $_SESSION['otp_verified'] === true) {
+    header("Location: landingmainpage.php");
     exit();
 }
 
-// ✅ Check if email parameter exists
-if (!isset($_GET['email']) || empty($_GET['email'])) {
-    $_SESSION['error_message'] = "Check your OTP code in spam or email within 1 minute.";
+// ✅ Ensure session variables exist before continuing
+if (!isset($_SESSION['email']) || !isset($_SESSION['session_token']) || !isset($_SESSION['id'])) {
+    $_SESSION['error_message'] = "Session expired. Please log in again.";
     header("Location: index.php");
     exit();
 }
 
-// ✅ Ensure the session is active
-if (!isset($_SESSION['email']) || !isset($_SESSION['session_token']) || !isset($_SESSION['id'])) {
-    header("Location: index.php"); // Redirect to login page
+$email = $_SESSION['email'];
+$session_token = $_SESSION['session_token'];
+
+// ✅ Debug: Check if session token exists
+if (empty($session_token)) {
+    $_SESSION['error_message'] = "Session token missing. Please log in again.";
+    header("Location: index.php");
     exit();
 }
 
-// ✅ Set OTP verified
-$_SESSION['otp_verified'] = true;
+// ✅ Check if OTP is submitted
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['otp'])) {
+    $user_otp = trim($_POST['otp']);
 
-$email = urldecode($_GET['email']);
-?>
+    // ✅ Fetch OTP details from the database
+    $stmt = $conn->prepare("SELECT otp, otp_expiry FROM registerlanding WHERE email = ? AND session_token = ?");
+    $stmt->bind_param("ss", $email, $session_token);
+    $stmt->execute();
+    $stmt->store_result();
+
+    // ✅ If user is found
+    if ($stmt->num_rows > 0) {
+        $stmt->bind_result($stored_otp, $otp_expiry);
+        $stmt->fetch();
+
+        // ✅ Debug: Display values before checking OTP
+        echo "Stored OTP: " . $stored_otp . "<br>";
+        echo "Entered OTP: " . $user_otp . "<br>";
+        echo "Current Time: " . date("Y-m-d H:i:s") . "<br>";
+        echo "OTP Expiry: " . $otp_expiry . "<br>";
+        echo "Time Difference: " . (strtotime($otp_expiry) - time());
+        exit();
+
+        if ($stored_otp === $user_otp && strtotime($otp_expiry) >= time()) {
+            $_SESSION['otp_verified'] = true;
+
+            //  Clear OTP after successful verification
+            $clear_otp = $conn->prepare("UPDATE registerlanding SET otp = NULL, otp_expiry = NULL WHERE email = ?");
+            $clear_otp->bind_param("s", $email);
+            $clear_otp->execute();
+            $clear_otp->close();
+
+            // ✅ Redirect to main page
+            header("Location: landingmainpage.php");
+            exit();
+        } else {
+            $_SESSION['error_message'] = "Invalid or expired OTP.";
+        }
+    } else {
+        $_SESSION['error_message'] = "Invalid session or OTP. Please try again.";
+    }
+
+    $stmt->close();
+    $conn->close();
+}
+
+// ✅ If OTP fails, reload page
+?> 
 
 
 <!DOCTYPE html>
@@ -59,7 +109,7 @@ $email = urldecode($_GET['email']);
         <img src="assets/img/logo.jpg" alt="LGU Logo" class="w-16 h-16 mx-auto mb-2">
         
         <h2 class="text-xl font-semibold text-blue-700 mb-2">OTP Verification</h2>
-        <p class="text-sm text-gray-700">Enter the OTP sent to your email</p>
+        <p class="text-sm text-gray-700">Enter the OTP sent to your email & Check your Spam.</p>
 
         <?php if (isset($_SESSION['error_message'])): ?>
             <p class="text-red-500 text-sm mt-2"><?php echo $_SESSION['error_message']; unset($_SESSION['error_message']); ?></p>
@@ -68,6 +118,8 @@ $email = urldecode($_GET['email']);
         <!-- OTP Input Form -->
         <form action="verify_otp.php" method="POST" class="mt-4">
             <input type="hidden" name="email" value="<?php echo htmlspecialchars($email); ?>">
+            <input type="hidden" name="csrf_token" value="<?php echo $_SESSION['csrf_token']; ?>">
+            
             <input type="text" name="otp" placeholder="Enter OTP" required class="w-full p-2 border border-gray-300 rounded-md text-center">
             <button type="submit" class="w-full bg-blue-600 text-white py-2 mt-3 rounded-md hover:bg-blue-700 transition">
                 Verify OTP
@@ -83,7 +135,13 @@ $email = urldecode($_GET['email']);
         </form>
     </div>
 
+<script>
+    //  Disable back button
+    history.pushState(null, null, location.href);
+    window.onpopstate = function () {
+        history.go(1);
+    };
+</script>
+
 </body>
 </html>
-
-

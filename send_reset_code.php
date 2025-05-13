@@ -35,8 +35,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $mail->isSMTP();
                 $mail->Host       = 'smtp.gmail.com'; // Gmail SMTP Server
                 $mail->SMTPAuth   = true;
-                $mail->Username   = 'wendhil10@gmail.com'; // Your Gmail
-                $mail->Password   = 'ceyh bcod aczy mytj'; // App Password
+                $mail->Username   = 'unifiedlgu@gmail.com'; // Your Gmail
+                $mail->Password   = 'kbyt zdmk khsd pcvt'; // App Password
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
                 $mail->Port       = 587;
                 
@@ -45,7 +45,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $mail->addAddress($email);
 
                 // Email Content
-                $reset_link = "http://localhost/landingpage/reset_password.php?token=" . urlencode($token);
+               $base_url = "https://smartbarangayconnect.com/";  // Define the base URL manually
+$reset_link = $base_url . "reset_password.php?token=" . urlencode($token);
+
+
                 $mail->isHTML(true);
                 $mail->Subject = "LGU - Password Reset Request";
                 $mail->Body    = "<p>Dear Citizen,</p>
@@ -115,14 +118,20 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   
+    <title>LGU password reset</title>
     <link rel="shortcut icon" href="assets/img/logo.jpg" type="image/x-icon">
-    <title>LGU Portal</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="h-screen w-screen bg-cover bg-center relative" style="background-image: url('assets/img/lgupic.jpg');">
     
     <!-- Overlay -->
     <div class="absolute inset-0 bg-black bg-opacity-50"></div>
+<script>
+    setTimeout(function() {
+        window.location.href = "index.php";
+    }, 5000); // 5000 milliseconds = 5 seconds
+</script>
 
 </body>
 </html>

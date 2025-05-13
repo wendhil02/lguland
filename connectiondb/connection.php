@@ -1,8 +1,8 @@
 <?php
-$servername = "localhost:3306";
-$username = "root";
-$password = "";
-$database = "land";
+$servername = "localhost";
+$username = "smar_bpasmart";
+$password = "DbOKjutmNG1c073D";
+$database = "smar_land";
 
 $conn = new mysqli($servername, $username, $password, $database);
 

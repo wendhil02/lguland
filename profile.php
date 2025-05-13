@@ -1,14 +1,16 @@
 <?php
 session_start();
-require 'connectiondb/connection.php'; // Database connection file
+require 'connectiondb/connection.php';
 
+// ✅ Redirect if not logged in
 if (!isset($_SESSION['id'])) {
-    die("Unauthorized access.");
+    header("Location: landingmainpage.php");
+    exit();
 }
 
-$id = $_SESSION['id']; // Retrieve user's ID from session
+$id = $_SESSION['id'];
 
-// Fetch existing user data
+// ✅ Fetch user data
 $sql = "SELECT *, COALESCE(verified, 0) AS verified FROM registerlanding WHERE id = ?";
 $stmt = $conn->prepare($sql);
 $stmt->bind_param("i", $id);
@@ -20,8 +22,7 @@ $stmt->close();
 $verified = (bool) $user['verified'];
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    function sanitize($data)
-    {
+    function sanitize($data) {
         return htmlspecialchars(stripslashes(trim($data)));
     }
 
@@ -39,17 +40,63 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $barangay = sanitize($_POST['barangay']);
     $city = sanitize($_POST['city']);
 
-    // **Server-side validation**
+    $errors = [];
+
+    // ✅ Server-side validation
     if (empty($first_name) || empty($last_name) || empty($birth_date) || empty($sex) || empty($mobile) || empty($working) || empty($occupation) || empty($house) || empty($street) || empty($barangay) || empty($city)) {
-        die("All required fields must be filled.");
+        $errors[] = "All required fields must be filled.";
+    }
+
+    if (!preg_match("/^[a-zA-ZñÑ\s-]+$/", $first_name) || !preg_match("/^[a-zA-ZñÑ\s-]+$/", $last_name)) {
+        $errors[] = "Invalid name format. Only letters, spaces, and hyphens are allowed.";
     }
 
     if (!preg_match("/^[0-9]{11}$/", $mobile)) {
-        die("Invalid mobile number. It should be exactly 11 digits.");
+        $errors[] = "Invalid mobile number. It should be exactly 11 digits.";
     }
 
     if (strtotime($birth_date) > time()) {
-        die("Birth date cannot be in the future.");
+        $errors[] = "Birth date cannot be in the future.";
+    }
+
+    // ✅ Handle Profile Picture Upload
+    if (isset($_FILES['profile_pic']) && $_FILES['profile_pic']['error'] == UPLOAD_ERR_OK) {
+        $allowed_types = ['image/jpeg', 'image/png', 'image/jpg'];
+        $file_type = $_FILES['profile_pic']['type'];
+        $file_size = $_FILES['profile_pic']['size'];
+
+        if (!in_array($file_type, $allowed_types)) {
+            $errors[] = "Invalid file type. Only JPG, JPEG, and PNG files are allowed.";
+        }
+
+        if ($file_size > 2 * 1024 * 1024) { // 2MB limit
+            $errors[] = "File size must be less than 2MB.";
+        }
+
+        if (empty($errors)) {
+            $upload_dir = "uploads/";
+            if (!file_exists($upload_dir)) {
+                mkdir($upload_dir, 0777, true);
+            }
+
+            $file_extension = pathinfo($_FILES['profile_pic']['name'], PATHINFO_EXTENSION);
+            $new_file_name = "profile_" . $id . "." . $file_extension;
+            $target_file = $upload_dir . $new_file_name;
+
+            if (move_uploaded_file($_FILES['profile_pic']['tmp_name'], $target_file)) {
+                $profile_pic = $target_file;
+            } else {
+                $errors[] = "Error uploading profile picture.";
+            }
+        }
+    } else {
+        $profile_pic = $user['profile_pic'] ?? null;
+    }
+
+    if (!empty($errors)) {
+        $_SESSION['errors'] = $errors;
+        header("Location: profile.php");
+        exit();
     }
 
     $verified = 1;
@@ -57,12 +104,12 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $sql = "UPDATE registerlanding SET 
                 first_name = ?, last_name = ?, middle_name = ?, suffix = ?, 
                 birth_date = ?, sex = ?, mobile = ?, working = ?, occupation = ?, 
-                house = ?, street = ?, barangay = ?, city = ?, verified = ? 
+                house = ?, street = ?, barangay = ?, city = ?, verified = ?, profile_pic = ?
             WHERE id = ?";
 
     if ($stmt = $conn->prepare($sql)) {
         $stmt->bind_param(
-            "sssssssssssssii",
+            "sssssssssssssisi",
             $first_name,
             $last_name,
             $middle_name,
@@ -77,21 +124,58 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $barangay,
             $city,
             $verified,
+            $profile_pic,
             $id
         );
 
         if ($stmt->execute()) {
-            echo "<script>alert('Profile updated successfully!'); window.location.href='profile.php';</script>";
+            // ✅ Sync updated data to the subdomain
+            $postData = [
+                'id' => $id,
+                'first_name' => $first_name,
+                'last_name' => $last_name,
+                'middle_name' => $middle_name,
+                'suffix' => $suffix,
+                'birth_date' => $birth_date,
+                'sex' => $sex,
+                'mobile' => $mobile,
+                'working' => $working,
+                'occupation' => $occupation,
+                'house' => $house,
+                'street' => $street,
+                'barangay' => $barangay,
+                'city' => $city,
+                'verified' => $verified,
+                'profile_pic' => $profile_pic
+            ];
+
+            $ch = curl_init("https://bpa.smartbarangayconnect.com/sync.php");
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+            curl_setopt($ch, CURLOPT_POST, true);
+            curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+            $response = curl_exec($ch);
+            curl_close($ch);
+
+            $_SESSION['success'] = "Profile updated successfully!";
+            header("Location: profile.php");
+            exit();
         } else {
-            die("Error updating record: " . $stmt->error);
+            $_SESSION['errors'] = ["Error updating record: " . $stmt->error];
+            header("Location: profile.php");
+            exit();
         }
         $stmt->close();
     } else {
-        die("Error in preparing statement: " . $conn->error);
+        $_SESSION['errors'] = ["Error in preparing statement: " . $conn->error];
+        header("Location: profile.php");
+        exit();
     }
     $conn->close();
 }
 ?>
+
+
+
 
 
 <!DOCTYPE html>
@@ -104,7 +188,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <link rel="shortcut icon" href="assets/img/logo.jpg" type="image/x-icon">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
-
+     <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
         body {
             font-family: "Poppins", sans-serif;
@@ -198,6 +282,30 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     </header>
 
+<?php if (isset($_SESSION['errors'])): ?>
+    <script>
+        Swal.fire({
+            icon: 'error',
+            title: 'Validation Error',
+            html: '<?= implode("<br>", $_SESSION["errors"]) ?>',
+            confirmButtonColor: '#d33'
+        });
+    </script>
+    <?php unset($_SESSION['errors']); ?>
+<?php endif; ?>
+
+<?php if (isset($_SESSION['success'])): ?>
+    <script>
+        Swal.fire({
+            icon: 'success',
+            title: 'Success!',
+            text: '<?= $_SESSION["success"] ?>',
+            confirmButtonColor: '#28a745'
+        });
+    </script>
+    <?php unset($_SESSION['success']); ?>
+<?php endif; ?>
+
     <div class="container">
         <div class="flex justify-center items-center mb-4">
             <span class="px-4 py-2 text-lg font-semibold rounded-full shadow-md 
@@ -207,97 +315,125 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             </span>
         </div>
 
-        <form action="profile.php" method="POST">
+        <form action="profile.php" method="POST" enctype="multipart/form-data"> <!-- Added enctype for file uploads -->
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div>
-                    <label class="font-semibold text-gray-700">* First Name:</label>
-                    <input type="text" name="first_name" value="<?= htmlspecialchars($user['first_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
-                </div>
-                <div>
-                    <label class="font-semibold text-gray-700">* Last Name:</label>
-                    <input type="text" name="last_name" value="<?= htmlspecialchars($user['last_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
-                </div>
-            </div>
+    <!-- Profile Picture Upload -->
+    <div class="mb-4 text-center">
+        <label class="font-semibold text-gray-700 block">Profile Picture:</label>
+        <div class="flex justify-center items-center">
+            <img id="profilePreview" src="<?= $user['profile_pic'] ?? 'default-profile.png' ?>" class="w-32 h-32 object-cover rounded-full border shadow-md" alt="Profile Preview">
+        </div>
+        <input type="file" name="profile_pic" id="profilePicInput" class="mt-2 w-full p-2 border rounded-md">
+    </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div>
-                    <label class="font-semibold text-gray-700">Middle Name (Optional):</label>
-                    <input type="text" name="middle_name" value="<?= htmlspecialchars($user['middle_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
-                </div>
-                <div>
-                    <label class="font-semibold text-gray-700">Suffix:</label>
-                    <select name="suffix" class="w-full p-2 border rounded-md">
-                        <option value="">Select</option>
-                        <option value="PhD">none</option>
-                        <option value="Jr.">Jr.</option>
-                        <option value="Sr.">Sr.</option>
-                        <option value="II">II</option>
-                        <option value="III">III</option>
-                        <option value="PhD">PhD</option>
-                    </select>
-                </div>
-            </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+            <label class="font-semibold text-gray-700">* First Name:</label>
+            <input type="text" name="first_name" value="<?= htmlspecialchars($user['first_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
+        </div>
+        <div>
+            <label class="font-semibold text-gray-700">* Last Name:</label>
+            <input type="text" name="last_name" value="<?= htmlspecialchars($user['last_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
+        </div>
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Birth Date:</label>
-                <input type="date" name="birth_date" value="<?= $user['birth_date'] ?? '' ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        <div>
+            <label class="font-semibold text-gray-700">Middle Name (Optional):</label>
+            <input type="text" name="middle_name" value="<?= htmlspecialchars($user['middle_name'] ?? '') ?>" class="w-full p-2 border rounded-md">
+        </div>
+        <div>
+            <label class="font-semibold text-gray-700">Suffix:</label>
+            <select name="suffix" class="w-full p-2 border rounded-md">
+                <option value="">Select</option>
+                <option value="Jr.">Jr.</option>
+                <option value="Sr.">Sr.</option>
+                <option value="II">II</option>
+                <option value="III">III</option>
+                <option value="PhD">PhD</option>
+            </select>
+        </div>
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Sex:</label>
-                <select name="sex" class="w-full p-2 border rounded-md">
-                    <option value="MALE" <?= $user['sex'] == 'MALE' ? 'selected' : '' ?>>Male</option>
-                    <option value="FEMALE" <?= $user['sex'] == 'FEMALE' ? 'selected' : '' ?>>Female</option>
-                    <option value="OTHER" <?= $user['sex'] == 'OTHER' ? 'selected' : '' ?>>Other</option>
-                </select>
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Birth Date:</label>
+        <input type="date" name="birth_date" value="<?= $user['birth_date'] ?? '' ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Mobile Number:</label>
-                <input type="text" name="mobile" value="<?= htmlspecialchars($user['mobile'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <!-- Gender Selection -->
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Gender:</label>
+        <div class="flex space-x-4">
+            <label class="flex items-center">
+                <input type="radio" name="sex" value="MALE" <?= $user['sex'] == 'MALE' ? 'checked' : '' ?> class="mr-2"> Male
+            </label>
+            <label class="flex items-center">
+                <input type="radio" name="sex" value="FEMALE" <?= $user['sex'] == 'FEMALE' ? 'checked' : '' ?> class="mr-2"> Female
+            </label>
+            <label class="flex items-center">
+                <input type="radio" name="sex" value="OTHER" <?= $user['sex'] == 'OTHER' ? 'checked' : '' ?> class="mr-2"> Other
+            </label>
+        </div>
+    </div>
 
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Mobile Number:</label>
+        <input type="text" name="mobile" value="<?= htmlspecialchars($user['mobile'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* House Number:</label>
-                <input type="text" name="house" value="<?= htmlspecialchars($user['house'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* House Number:</label>
+        <input type="text" name="house" value="<?= htmlspecialchars($user['house'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Street:</label>
-                <input type="text" name="street" value="<?= htmlspecialchars($user['street'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Street:</label>
+        <input type="text" name="street" value="<?= htmlspecialchars($user['street'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Barangay:</label>
-                <input type="text" name="barangay" value="<?= htmlspecialchars($user['barangay'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Barangay:</label>
+        <input type="text" name="barangay" value="<?= htmlspecialchars($user['barangay'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* City:</label>
-                <input type="text" name="city" value="<?= htmlspecialchars($user['city'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* City:</label>
+        <input type="text" name="city" value="<?= htmlspecialchars($user['city'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Are you working in Quezon City?</label>
-                <div class="flex space-x-4">
-                    <label><input type="radio" name="working" value="yes" <?= $user['working'] == 'yes' ? 'checked' : '' ?>> Yes</label>
-                    <label><input type="radio" name="working" value="no" <?= $user['working'] == 'no' ? 'checked' : '' ?>> No</label>
-                </div>
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Are you working in Quezon City?</label>
+        <div class="flex space-x-4">
+            <label><input type="radio" name="working" value="yes" <?= $user['working'] == 'yes' ? 'checked' : '' ?>> Yes</label>
+            <label><input type="radio" name="working" value="no" <?= $user['working'] == 'no' ? 'checked' : '' ?>> No</label>
+        </div>
+    </div>
 
-            <div class="mb-4">
-                <label class="font-semibold text-gray-700">* Occupation:</label>
-                <input type="text" name="occupation" value="<?= htmlspecialchars($user['occupation'] ?? '') ?>" class="w-full p-2 border rounded-md">
-            </div>
+    <div class="mb-4">
+        <label class="font-semibold text-gray-700">* Occupation:</label>
+        <input type="text" name="occupation" value="<?= htmlspecialchars($user['occupation'] ?? '') ?>" class="w-full p-2 border rounded-md">
+    </div>
 
-            <div class="text-center mt-6">
-                <button type="button" class="btn btn-exit" onclick="window.location.href='index.php'">Exit</button>
-                <button type="submit" class="btn btn-update"><i class="fas fa-save"></i> Update</button>
-                <button type="button" class="btn btn-deactivate">Deactivate Account</button>
-            </div>
-        </form>
+    <div class="text-center mt-6">
+        <button type="button" class="btn btn-exit" onclick="window.location.href='landingmainpage.php'">Exit</button>
+        <button type="submit" class="btn btn-update"><i class="fas fa-save"></i> Update</button>
+    </div>
+</form>
+
+<!-- JavaScript for Image Preview -->
+<script>
+document.getElementById('profilePicInput').addEventListener('change', function(event) {
+    const file = event.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            document.getElementById('profilePreview').src = e.target.result;
+        }
+        reader.readAsDataURL(file);
+    }
+});
+</script>
+
     </div>
     <script>
         document.addEventListener("DOMContentLoaded", function() {

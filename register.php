@@ -1,28 +1,41 @@
 <?php
 session_start();
-include("connectiondb/connection.php"); // Include database connection file
+include("connectiondb/connection.php"); // Database connection
+
+// ✅ Function to Check if a Password is Weak (Using External File)
+function is_weak_password($password) {
+    $password = strtolower($password); // Convert to lowercase for case-insensitive checking
+    $weak_passwords_file = "passwords/weakpassword.txt"; // Path sa weak passwords list
+
+    // Check kung may weak passwords file
+    if (file_exists($weak_passwords_file)) {
+        $weak_passwords = file($weak_passwords_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (in_array($password, $weak_passwords)) {
+            return true; // Weak ang password
+        }
+    }
+    return false; // Malakas ang password
+}
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Get user input
     $first_name = trim($_POST['first_name']);
     $last_name = trim($_POST['last_name']);
     $email = trim($_POST['email']);
     $password = $_POST['password'];
 
-    // List of common weak passwords
-    $weak_passwords = ["123456", "password", "123456789", "qwerty", "abc123", "12345678", "111111", "123123"];
-
-    // Validate input fields
+    // ✅ Input Validations (Only Email and Password)
     if (empty($first_name) || empty($last_name) || empty($email) || empty($password)) {
         $_SESSION['error'] = "All fields are required!";
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $_SESSION['error'] = "Invalid email format!";
-    } elseif (in_array($password, $weak_passwords)) {
+    } elseif (is_weak_password($password)) {  // ✅ Weak Password Checking
         $_SESSION['error'] = "Your password is too weak. Please choose a stronger password!";
     } elseif (strlen($password) < 8) {
         $_SESSION['error'] = "Password must be at least 8 characters long!";
     } else {
-        // Check if email already exists
+        // ✅ Proceed with checking email existence and inserting data
+
+        // ✅ Check if email already exists
         $query = "SELECT * FROM registerlanding WHERE email = ?";
         $stmt = $conn->prepare($query);
         $stmt->bind_param("s", $email);
@@ -32,17 +45,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         if ($stmt->num_rows > 0) {
             $_SESSION['error'] = "Email already exists. Try another!";
         } else {
-            // Hash password before storing
+            // ✅ Hash password before storing
             $hashed_password = password_hash($password, PASSWORD_BCRYPT);
 
-            // Insert user into database
+            // ✅ Insert user into database
             $query = "INSERT INTO registerlanding (first_name, last_name, email, password) VALUES (?, ?, ?, ?)";
             $stmt = $conn->prepare($query);
             $stmt->bind_param("ssss", $first_name, $last_name, $email, $hashed_password);
 
             if ($stmt->execute()) {
                 $_SESSION['success'] = "Registration successful! You can now log in.";
-                header("Location: index.php");
+                header("Location: register.php");
                 exit();
             } else {
                 $_SESSION['error'] = "Something went wrong. Please try again!";
@@ -54,6 +67,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 }
 ?>
 
+
+
+
 <!DOCTYPE html>
 <html lang="en">
 
@@ -62,8 +78,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="shortcut icon" href="assets/img/logo.jpg" type="image/x-icon">
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/boxicons@2.1.4/dist/boxicons.js"></script>
+    
     <title>Register</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/boxicons@2.1.4/css/boxicons.min.css">
 </head>
 
 <body class="relative flex flex-col justify-center items-center  p-4 min-h-screen  bg-cover bg-center bg-fixed relative" 
@@ -115,12 +132,28 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <p id="emailError" class="text-red-600 text-sm"></p>
             </div>
 
-            <div class="relative">
-                <input type="password" name="password" id="password" placeholder="Password"
-                    class="w-full px-4 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <i class="bx bx-hide absolute right-3 top-3 text-gray-500 cursor-pointer" id="togglePassword"></i>
-                <p id="passwordError" class="text-red-600 text-sm"></p>
-            </div>
+        <div class="relative">
+    <input type="password" name="password" id="password" placeholder="Password"
+        class="w-full px-4 py-2 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500">
+    <i class="bx bx-hide absolute right-3 top-3 text-gray-500 cursor-pointer" id="togglePassword"></i>
+    <p id="passwordError" class="text-red-600 text-sm"></p>
+</div>
+
+<script>
+document.getElementById("togglePassword").addEventListener("click", function() {
+    let passwordInput = document.getElementById("password");
+    let icon = this;
+
+    if (passwordInput.type === "password") {
+        passwordInput.type = "text";
+        icon.classList.replace("bx-hide", "bx-show"); // Change icon
+    } else {
+        passwordInput.type = "password";
+        icon.classList.replace("bx-show", "bx-hide"); // Change icon back
+    }
+});
+</script>
+
 
             <button type="submit" name="register"
                 class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700 transition">
@@ -175,3 +208,4 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
 </body>
 </html>
+

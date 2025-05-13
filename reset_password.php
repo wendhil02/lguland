@@ -2,9 +2,40 @@
 session_start();
 include 'connectiondb/connection.php';
 
+// ✅ Function to check if a password is weak
+function is_weak_password($password) {
+    $password = strtolower($password); // Convert to lowercase for case-insensitive check
+    $weak_passwords_file = "passwords/weakpassword.txt"; // Path to weak passwords list
+
+    if (file_exists($weak_passwords_file)) {
+        $weak_passwords = file($weak_passwords_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (in_array($password, $weak_passwords)) {
+            return true; // Password is weak
+        }
+    }
+    return false; // Password is strong
+}
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $token = $_POST['token'];
-    $new_password = password_hash($_POST['new_password'], PASSWORD_BCRYPT);
+    $new_password = $_POST['new_password'];
+
+    // ✅ Password strength validation
+    if (!preg_match('/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[\W_]).{8,}$/', $new_password)) {
+        $_SESSION['message'] = "❌ Password must be at least 8 characters long, contain an uppercase letter, a lowercase letter, a number, and a special character.";
+        header("Location: reset_password.php?token=" . urlencode($token));
+        exit();
+    }
+
+    // ✅ Check for weak password
+    if (is_weak_password($new_password)) {
+        $_SESSION['message'] = "❌ Your password is too weak. Please choose a stronger password!";
+        header("Location: reset_password.php?token=" . urlencode($token));
+        exit();
+    }
+
+    // Hash the new password
+    $hashed_password = password_hash($new_password, PASSWORD_BCRYPT);
 
     // Validate token in the database
     $stmt = $conn->prepare("SELECT id, email, reset_token, reset_token_expiry FROM registerlanding WHERE reset_token = ?");
@@ -14,37 +45,36 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $user = $result->fetch_assoc();
 
     if (!$user) {
-        $_SESSION['message'] = "Invalid or expired reset token.";
+        $_SESSION['message'] = "❌ Invalid or expired reset token.";
         header("Location: reset_password.php?token=" . urlencode($token));
         exit();
     } 
     
-    // Get the current time separately
-    $current_time = date("Y-m-d H:i:s");
-
     // Check if token is expired
-    if (strtotime($user['reset_token_expiry']) < strtotime($current_time)) {
-        $_SESSION['message'] = "Token has expired. Please request a new password reset.";
+    if (strtotime($user['reset_token_expiry']) < time()) {
+        $_SESSION['message'] = "⏳ Token has expired. Please request a new password reset.";
         header("Location: reset_password.php?token=" . urlencode($token));
         exit();
     }
 
     // Update password and clear the token
     $stmt = $conn->prepare("UPDATE registerlanding SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE id = ?");
-    $stmt->bind_param("si", $new_password, $user['id']);
+    $stmt->bind_param("si", $hashed_password, $user['id']);
     $stmt->execute();
 
     if ($stmt->affected_rows > 0) {
-        $_SESSION['message'] = "Password successfully updated! You can now log in.";
-        header("Location: index.php"); // Redirects to login page
+        $_SESSION['success_message'] = "✅ Password successfully updated! You can now log in.";
+        header("Location: index.php"); // Redirects to login page with success message
         exit();
     } else {
-        $_SESSION['message'] = "Failed to update password. Please try again.";
+        $_SESSION['message'] = "❌ Failed to update password. Please try again.";
         header("Location: reset_password.php?token=" . urlencode($token));
         exit();
     }
 }
 ?>
+
+
 
 
 <!DOCTYPE html>
@@ -56,10 +86,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <title>Reset Password | LGU E-Services</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="flex items-center justify-center min-h-screen bg-gray-100">
+<body class="flex items-center justify-center min-h-screen h-screen w-screen bg-cover bg-center relative" style="background-image: url('assets/img/lgupic.jpg');">
+    
+    <!-- Background Overlay -->
+    <div class="absolute inset-0 bg-black bg-opacity-50 z-0"></div>
 
     <!-- Container -->
-    <div class="w-full max-w-md bg-white p-6 rounded-lg shadow-lg border border-gray-200">
+    <div class="w-full max-w-md bg-white p-6 rounded-lg shadow-lg border border-gray-200 relative z-10">
+        <!-- ✅ Success Notification -->
+        <?php if (isset($_SESSION['success_message'])): ?>
+            <div id="successAlert" class="mb-4 p-3 bg-green-100 text-green-700 rounded-md text-center shadow-md transition-opacity duration-1000">
+                <?php echo $_SESSION['success_message']; unset($_SESSION['success_message']); ?>
+            </div>
+        <?php endif; ?>
         
         <!-- Header with LGU Branding -->
         <div class="flex flex-col items-center mb-6">
@@ -89,7 +128,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     
                     <!-- Toggle Password Visibility -->
                     <span id="togglePassword" class="absolute inset-y-0 right-3 flex items-center cursor-pointer">
-                        <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="h-5 w-5 text-gray-500">
+                        <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="h-5 w-5 text-black">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
                         </svg>
@@ -112,6 +151,19 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     <!-- JavaScript for Password Toggle -->
     <script>
+    
+     // 🔔 Auto-hide success message after 5 seconds
+    setTimeout(() => {
+        let successAlert = document.getElementById("successAlert");
+        if (successAlert) {
+            successAlert.style.opacity = "0";
+            setTimeout(() => successAlert.remove(), 1000); // Smooth fade-out
+        }
+    }, 5000);
+    
+    
+    
+    
         document.getElementById("togglePassword").addEventListener("click", function () {
             let passwordField = document.getElementById("new_password");
             let eyeIcon = document.getElementById("eyeIcon");
